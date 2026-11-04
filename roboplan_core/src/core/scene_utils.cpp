@@ -135,7 +135,7 @@ makeJointGroupInfo(const pinocchio::Model& model, const std::vector<std::string>
     if (it == kPinocchioJointTypeMap.end()) {
       return tl::make_unexpected("Unsupported Pinocchio joint type: '" + joint.shortname() + "'");
     }
-    if (it->second == JointType::CONTINUOUS || it->second == JointType::PLANAR) {
+    if (it->second == JointType::CONTINUOUS || it->second == JointType::PLANAR || it->second == JointType::FLOATING) {
       num_joints_with_continuous_dofs += 1;
     }
   }
@@ -169,7 +169,7 @@ createDefaultJointGroupInfo(const pinocchio::Model& model) {
     }
     const auto joint_type = it->second;
 
-    if (joint_type == JointType::CONTINUOUS || joint_type == JointType::PLANAR) {
+    if (joint_type == JointType::CONTINUOUS || joint_type == JointType::PLANAR || joint_type == JointType::FLOATING) {
       default_group_has_continuous_dofs = true;
       default_group_num_continuous_dofs += 1;
     }
@@ -250,8 +250,24 @@ collapseContinuousJointPositions(const Scene& scene, const std::string& group_na
       orig_nq += 4;
       collapsed_nq += 3;
       break;
+    case JointType::FLOATING:
+      // nq=7 (x,y,z,qx,qy,qz,qw) -> nv=6, matching the joint's real velocity-space
+      // size. Translation and rotation are both unbounded for a floating joint
+      // (see isValidConfiguration/clampToValidConfiguration), so q_min/q_max for
+      // these 6 slots will always be +-infinity -- the exact values written here
+      // are never compared against a finite bound. What matters is only that
+      // collapsed_nq advances by exactly 6.
+      q_collapsed(collapsed_nq) = q_orig(orig_nq);
+      q_collapsed(collapsed_nq + 1) = q_orig(orig_nq + 1);
+      q_collapsed(collapsed_nq + 2) = q_orig(orig_nq + 2);
+      q_collapsed(collapsed_nq + 3) = q_orig(orig_nq + 3);
+      q_collapsed(collapsed_nq + 4) = q_orig(orig_nq + 4);
+      q_collapsed(collapsed_nq + 5) = q_orig(orig_nq + 5);
+      orig_nq += 7;
+      collapsed_nq += 6;
+      break;
     default:
-      throw std::runtime_error("Floating and unknown joints not supported.");
+      throw std::runtime_error("Unknown joints not supported.");
     }
   }
 
@@ -314,8 +330,29 @@ expandContinuousJointPositions(const Scene& scene, const std::string& group_name
       orig_nq += 3;
       expanded_nq += 4;
       break;
+    case JointType::FLOATING:
+      // Inverse of collapseContinuousJointPositions's FLOATING case: that
+      // function keeps x,y,z,qx,qy,qz (6 values) and drops qw. Reconstruct qw
+      // from the unit-quaternion constraint. The sign is ambiguous (qw and -qw
+      // represent the same rotation), which is fine here since nothing
+      // downstream needs a specific continuous path through quaternion space
+      // (see collapseContinuousJointPositions's own comment on why these
+      // values are never compared against a finite limit).
+      q_expanded(expanded_nq)     = q_orig(orig_nq);       // x
+      q_expanded(expanded_nq + 1) = q_orig(orig_nq + 1);   // y
+      q_expanded(expanded_nq + 2) = q_orig(orig_nq + 2);   // z
+      q_expanded(expanded_nq + 3) = q_orig(orig_nq + 3);   // qx
+      q_expanded(expanded_nq + 4) = q_orig(orig_nq + 4);   // qy
+      q_expanded(expanded_nq + 5) = q_orig(orig_nq + 5);   // qz
+      q_expanded(expanded_nq + 6) = std::sqrt(std::max(0.0,
+          1.0 - q_orig(orig_nq + 3) * q_orig(orig_nq + 3)
+              - q_orig(orig_nq + 4) * q_orig(orig_nq + 4)
+              - q_orig(orig_nq + 5) * q_orig(orig_nq + 5)));  // qw, reconstructed
+      orig_nq += 6;
+      expanded_nq += 7;
+      break;
     default:
-      throw std::runtime_error("Floating and unknown joints not supported.");
+      throw std::runtime_error("Unknown joints not supported.");
     }
   }
 

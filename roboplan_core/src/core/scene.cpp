@@ -477,7 +477,12 @@ bool Scene::isValidConfiguration(const Eigen::VectorXd& q) const {
 
     switch (info.type) {
     case JointType::FLOATING:
-      throw std::runtime_error("Floating joints not yet supported by isValidConfiguration.");
+      // A free-floating body has no meaningful translation limits -> unbounded, like CONTINUOUS.
+      // Only the quaternion needs to represent a valid rotation.
+      if (std::abs(q.segment(q_idx + 3, 4).squaredNorm() - 1.0) > kUnitCircleTol) {
+        return false;
+      }
+      break;
     case JointType::PLANAR:
       // The first 2 DOFs (translation) can be bounded, but the last (rotation) is always valid.
       // However, we still check that it is on the unit circle.
@@ -525,7 +530,11 @@ Eigen::VectorXd Scene::clampToValidConfiguration(const Eigen::VectorXd& q) const
 
     switch (info.type) {
     case JointType::FLOATING:
-      throw std::runtime_error("Floating joints not yet supported by clampToValidConfiguration.");
+      // Translation is unbounded, nothing to clamp. The quaternion has no interval to clamp to
+      // either, but may have drifted off unit norm during planning, so renormalize it, mirroring
+      // the unit-norm check isValidConfiguration performs for the same joint type.
+      result.segment(q_idx + 3, 4).normalize();
+      break;
     case JointType::PLANAR: {
       // The first 2 DOFs (translation) can be bounded, but the last (rotation) is always valid.
       // However, we still renormalize it onto the unit circle.
